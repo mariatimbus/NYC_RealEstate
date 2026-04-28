@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""NYC Property Sales Dataset — Selected Columns Only"""
+"""NYC Property Sales Dataset — Clean & Save Selected Columns Only"""
 
 import pandas as pd
 
 DATASET_PATH = "data/nyc-rolling-sales.csv"
+OUTPUT_PATH = "data/cleared_data.csv"
 
 # Columns to keep
 COLUMNS = [
@@ -54,6 +55,13 @@ def load_and_clean_dataset(path: str = DATASET_PATH) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def save_cleaned_dataset(df: pd.DataFrame, output_path: str = OUTPUT_PATH) -> None:
+    """Save the cleaned dataset to a CSV file."""
+    df.to_csv(output_path, index=False)
+    print(f"Cleaned dataset saved to: {output_path}")
+    print(f"File size: {pd.io.common.file_exists(output_path) and len(df):,} rows, {len(df.columns)} columns")
+
+
 def explore_dataset(df: pd.DataFrame) -> None:
     """Print basic exploration of the cleaned dataset."""
     print("\n=== Dataset Info ===")
@@ -66,4 +74,5 @@ def explore_dataset(df: pd.DataFrame) -> None:
 
 if __name__ == "__main__":
     df = load_and_clean_dataset()
+    save_cleaned_dataset(df)
     explore_dataset(df)
