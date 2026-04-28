@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""NYC Property Sales Dataset — Clean & Save Selected Columns Only"""
+"""NYC Property Sales Dataset — Generate full & simplified CSVs"""
 
 import pandas as pd
+import kagglehub
+from kagglehub import KaggleDatasetAdapter
 
-DATASET_PATH = "data/nyc-rolling-sales.csv"
-OUTPUT_PATH = "data/cleared_data.csv"
+FULL_OUTPUT = "data/full_dataset.csv"
+SIMPLIFIED_OUTPUT = "data/simplified_dataset.csv"
 
-# Columns to keep
-COLUMNS = [
+# Simplified columns
+SIMPLIFIED_COLS = [
     "SALE PRICE",
     "NEIGHBORHOOD",
     "BUILDING CLASS CATEGORY",
@@ -28,51 +30,77 @@ NUMERIC_COLS = [
 ]
 
 
+def load_full_dataset() -> pd.DataFrame:
+    """Load the complete dataset from Kaggle."""
+    print("Loading full dataset from Kaggle...")
+    df = kagglehub.load_dataset(
+        KaggleDatasetAdapter.PANDAS,
+        "new-york-city/nyc-property-sales",
+        "nyc-rolling-sales.csv",
+    )
+    print(f"Full dataset loaded: {len(df):,} rows × {len(df.columns)} columns")
+    return df
+
+
+def save_full_dataset(df: pd.DataFrame) -> None:
+    """Save the raw full dataset."""
+    df.to_csv(FULL_OUTPUT, index=False)
+    print(f"Full dataset saved to: {FULL_OUTPUT}")
+
+
 def clean_numeric(series: pd.Series) -> pd.Series:
     """Convert a column to numeric, coercing invalid values (like '-') to NaN."""
     return pd.to_numeric(series.astype(str).str.replace(",", ""), errors="coerce")
 
 
-def load_and_clean_dataset(path: str = DATASET_PATH) -> pd.DataFrame:
-    """Load the dataset, keep only needed columns, and clean numeric fields."""
-    print(f"Loading dataset from: {path}")
-    df = pd.read_csv(path, usecols=COLUMNS)
+def build_simplified_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only selected columns and clean numeric fields."""
+    sdf = df[SIMPLIFIED_COLS].copy()
 
     for col in NUMERIC_COLS:
-        df[col] = clean_numeric(df[col])
+        sdf[col] = clean_numeric(sdf[col])
 
     # Drop rows with missing values in key fields
-    before = len(df)
-    df = df.dropna(subset=["SALE PRICE", "GROSS SQUARE FEET", "LAND SQUARE FEET"])
-    after = len(df)
-    print(f"Kept {after:,} of {before:,} rows after cleaning")
+    before = len(sdf)
+    sdf = sdf.dropna(subset=["SALE PRICE", "GROSS SQUARE FEET", "LAND SQUARE FEET"])
+    after = len(sdf)
+    print(f"Simplified dataset: kept {after:,} of {before:,} rows after cleaning")
 
-    # Convert remaining integer-like columns
+    # Convert integer-like columns
     int_cols = ["TOTAL UNITS", "RESIDENTIAL UNITS", "COMMERCIAL UNITS", "YEAR BUILT"]
     for col in int_cols:
-        df[col] = df[col].astype(int)
+        sdf[col] = sdf[col].astype(int)
 
-    return df.reset_index(drop=True)
-
-
-def save_cleaned_dataset(df: pd.DataFrame, output_path: str = OUTPUT_PATH) -> None:
-    """Save the cleaned dataset to a CSV file."""
-    df.to_csv(output_path, index=False)
-    print(f"Cleaned dataset saved to: {output_path}")
-    print(f"File size: {pd.io.common.file_exists(output_path) and len(df):,} rows, {len(df.columns)} columns")
+    return sdf.reset_index(drop=True)
 
 
-def explore_dataset(df: pd.DataFrame) -> None:
-    """Print basic exploration of the cleaned dataset."""
-    print("\n=== Dataset Info ===")
-    print(df.info())
-    print("\n=== First 5 Records ===")
-    print(df.head())
-    print("\n=== Descriptive Statistics ===")
-    print(df.describe())
+def save_simplified_dataset(df: pd.DataFrame) -> None:
+    """Save the cleaned simplified dataset."""
+    df.to_csv(SIMPLIFIED_OUTPUT, index=False)
+    print(f"Simplified dataset saved to: {SIMPLIFIED_OUTPUT}")
+
+
+def remove_old_csvs() -> None:
+    """Remove any CSVs other than the two required files."""
+    import os
+    for f in os.listdir("data"):
+        if f.endswith(".csv") and f not in ("full_dataset.csv", "simplified_dataset.csv"):
+            os.remove(os.path.join("data", f))
+            print(f"Removed old file: data/{f}")
 
 
 if __name__ == "__main__":
-    df = load_and_clean_dataset()
-    save_cleaned_dataset(df)
-    explore_dataset(df)
+    # 1. Load & save full dataset
+    df_full = load_full_dataset()
+    save_full_dataset(df_full)
+
+    # 2. Build & save simplified dataset
+    df_simple = build_simplified_dataset(df_full)
+    save_simplified_dataset(df_simple)
+
+    # 3. Clean up old CSVs
+    remove_old_csvs()
+
+    print("\n=== Done ===")
+    print(f"Full:       {FULL_OUTPUT}  — {len(df_full):,} rows × {len(df_full.columns)} cols")
+    print(f"Simplified: {SIMPLIFIED_OUTPUT} — {len(df_simple):,} rows × {len(df_simple.columns)} cols")
