@@ -195,6 +195,7 @@ def main():
     aggregate_analysis(df)
     price_per_sqft_analysis(df)
     kmeans_clustering(df)
+    
     print("\n=== Etapa 2 finalizată cu succes! ===")
     print(f"Toate rezultatele sunt salvate în directorul '{RESULTS_DIR}'.")
 
