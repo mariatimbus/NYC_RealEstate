@@ -178,7 +178,7 @@ def kmeans_clustering(df: pd.DataFrame) -> None:
     cluster_profile.to_csv(os.path.join(RESULTS_DIR, "cluster_profiles.csv"))
     print(f"Saved: {RESULTS_DIR}/cluster_profiles.csv")
 
-    # PCA for explained variance (no plots)
+    # PCA for explained variance 
     pca = PCA(n_components=2)
     pca.fit(X_scaled)
     print(f"\nPCA explained variance: PC1={pca.explained_variance_ratio_[0]:.2%}, PC2={pca.explained_variance_ratio_[1]:.2%}")

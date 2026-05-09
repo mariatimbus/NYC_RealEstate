@@ -2,3 +2,10 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Personal filters & output
+personal/
+results/
+
+# Chart generation script
+src/generate_charts.py
