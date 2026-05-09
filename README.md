@@ -6,6 +6,7 @@ U — preferințele pieței / cumpărătorilor
 Σ — importanța componentelor
 Vᵀ — relațiile dintre caracteristicile proprietăților
 Caracteristicile alese ar fi:
+
 U:
 - SALE PRICE: 
 - NEIGHBORHOOD
