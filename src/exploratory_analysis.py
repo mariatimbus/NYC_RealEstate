@@ -187,81 +187,6 @@ def kmeans_clustering(df: pd.DataFrame) -> None:
     df.to_csv(os.path.join(RESULTS_DIR, "clustered_dataset.csv"), index=False)
     print(f"Saved: {RESULTS_DIR}/clustered_dataset.csv")
 
-def generate_visualizations(df: pd.DataFrame) -> None:
-    import matplotlib.pyplot as plt
-
-    # 1. PRICE VS SURFACE
-    filtered_df = df[
-        (df["SALE PRICE"] < df["SALE PRICE"].quantile(0.99)) &
-        (df["GROSS SQUARE FEET"] < df["GROSS SQUARE FEET"].quantile(0.99))
-    ]
-
-    plt.figure(figsize=(10, 6))
-
-    plt.scatter(
-        filtered_df["GROSS SQUARE FEET"],
-        filtered_df["SALE PRICE"],
-        alpha=0.3
-    )
-
-    plt.xlabel("Gross Square Feet")
-    plt.ylabel("Sale Price ($)")
-    plt.title("Sale Price vs Gross Square Feet")
-    plt.grid(True)
-
-    plt.savefig(os.path.join(RESULTS_DIR, "price_vs_surface.png"))
-    plt.close()
-
-    # 2. DISTRIBUTION OF SALE PRICES
-
-    import seaborn as sns
-
-    filtered_prices = df[
-        df["SALE PRICE"] <= df["SALE PRICE"].quantile(0.99)
-    ]["SALE PRICE"]
-
-    plt.figure(figsize=(10, 6))
-
-    sns.histplot(
-        filtered_prices,
-        bins=60,
-        kde=True,
-        color="steelblue",
-        edgecolor="white"
-    )
-
-    plt.title("Distribution of Sale Prices\n(up to the 99th percentile)")
-    plt.xlabel("Sale Price ($)")
-    plt.ylabel("Number of properties")
-
-    plt.grid(True, alpha=0.4)
-    plt.tight_layout()
-
-    plt.savefig(os.path.join(RESULTS_DIR, "price_distribution.png"))
-    plt.close()
-    
-
-    # 3. TOP 15 NEIGHBORHOODS BY MEDIAN SALE PRICE
-    neighborhood_median = (
-        df.groupby("NEIGHBORHOOD")["SALE PRICE"]
-        .median()
-        .sort_values(ascending=False)
-        .head(15)
-    )
-
-    plt.figure(figsize=(12, 6))
-    neighborhood_median.plot(kind="bar")
-    plt.xlabel("Neighborhood")
-    plt.ylabel("Median Sale Price ($)")
-    plt.title("Top 15 Neighborhoods by Median Sale Price")
-    plt.xticks(rotation=75, ha="right")
-    plt.tight_layout()
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "top_neighborhoods_median_price.png"))
-    plt.close()
-
-    print(f"Saved visualizations in {RESULTS_DIR}/")
-
 
 def main():
     df = load_data(INPUT_PATH)
@@ -269,7 +194,6 @@ def main():
     correlation_analysis(df)
     aggregate_analysis(df)
     price_per_sqft_analysis(df)
-    generate_visualizations(df)
     kmeans_clustering(df)
     
     print("\n=== Etapa 2 finalizată cu succes! ===")
