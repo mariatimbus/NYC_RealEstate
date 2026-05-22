@@ -30,9 +30,9 @@ CHARTS_DIR = "charts"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(CHARTS_DIR, exist_ok=True)
 
-# ------------------------------------------------------------------
+
 # 1. Încărcare & preprocesare
-# ------------------------------------------------------------------
+
 
 def load_and_preprocess(path: str) -> pd.DataFrame:
     """Încarcă datele și encodează variabilele categorice."""
@@ -70,10 +70,68 @@ def standardize(df: pd.DataFrame) -> np.ndarray:
     stds[stds == 0] = 1.0  # evităm împărțirea la 0
     return (A - means) / stds
 
-
-# ------------------------------------------------------------------
 # 2. SVD MANUAL — folosind AᵀA eigen-decomposition
-# ------------------------------------------------------------------
+
+
+def jacobi_eigen_decomposition(M: np.ndarray, max_iter: int = 100, tol: float = 1e-10):
+    """
+    Metoda Jacobi pentru descompunerea unei matrice simetrice în valori proprii.
+    Returnează (eigvals, eigvecs) unde coloanele lui eigvecs sunt vectorii proprii.
+    """
+    n = M.shape[0]
+    A = M.copy()
+    V = np.eye(n)
+
+    for _ in range(max_iter):
+        # Găsim cel mai mare element off-diagonal
+        p, q = 0, 1
+        max_val = abs(A[0, 1])
+        for i in range(n):
+            for j in range(i + 1, n):
+                if abs(A[i, j]) > max_val:
+                    max_val = abs(A[i, j])
+                    p, q = i, j
+
+        if max_val < tol:
+            break
+
+        # Calculăm unghiul de rotație
+        if abs(A[p, p] - A[q, q]) < 1e-12:
+            theta = np.pi / 4
+        else:
+            theta = 0.5 * np.arctan2(2.0 * A[p, q], A[q, q] - A[p, p])
+
+        c = np.cos(theta)
+        s = np.sin(theta)
+
+        # Salvăm valorile vechi
+        app = A[p, p]
+        aqq = A[q, q]
+        apq = A[p, q]
+
+        # Actualizăm elementele A[p,p], A[q,q], A[p,q]
+        A[p, p] = c * c * app - 2 * c * s * apq + s * s * aqq
+        A[q, q] = s * s * app + 2 * c * s * apq + c * c * aqq
+        A[p, q] = A[q, p] = 0.0
+
+        # Actualizăm restul elementelor pe coloanele p și q
+        for i in range(n):
+            if i != p and i != q:
+                a_ip = A[i, p]
+                a_iq = A[i, q]
+                A[i, p] = A[p, i] = c * a_ip - s * a_iq
+                A[i, q] = A[q, i] = s * a_ip + c * a_iq
+
+        # Actualizăm matricea de vectori proprii V = V · J
+        for i in range(n):
+            v_ip = V[i, p]
+            v_iq = V[i, q]
+            V[i, p] = c * v_ip - s * v_iq
+            V[i, q] = s * v_ip + c * v_iq
+
+    eigvals = np.diag(A)
+    return eigvals, V
+
 
 def manual_svd(A: np.ndarray, k: int = None):
     """
@@ -82,7 +140,7 @@ def manual_svd(A: np.ndarray, k: int = None):
 
     Pași:
         1. M = Aᵀ · A
-        2. Valori proprii (λ) și vectori proprii (V) pentru M
+        2. Valori proprii (λ) și vectori proprii (V) pentru M — prin metoda Jacobi
         3. Valori singulare: σ = sqrt(λ)
         4. U = A · V · Σ⁻¹
     """
@@ -93,8 +151,8 @@ def manual_svd(A: np.ndarray, k: int = None):
     # Pasul 1: M = AᵀA
     M = A.T @ A  # (n × n)
 
-    # Pasul 2: valori proprii și vectori proprii
-    eigvals, eigvecs = np.linalg.eigh(M)  # eigh pentru matrice simetrică
+    # Pasul 2: valori proprii și vectori proprii (manual, metoda Jacobi)
+    eigvals, eigvecs = jacobi_eigen_decomposition(M)
 
     # Sortăm descrescător după valori proprii
     idx = np.argsort(eigvals)[::-1]
@@ -120,6 +178,11 @@ def manual_svd(A: np.ndarray, k: int = None):
     return U, singular_values, V.T
 
 
+def _norm(x: np.ndarray) -> float:
+    """Norma Euclidiană (L2) calculată manual."""
+    return np.sqrt(np.sum(x * x))
+
+
 def power_method_svd(A: np.ndarray, k: int = 3, max_iter: int = 100, tol: float = 1e-10):
     """
     (Opțional) Power iteration pentru primele k componente singulare.
@@ -134,16 +197,16 @@ def power_method_svd(A: np.ndarray, k: int = 3, max_iter: int = 100, tol: float 
 
     for _ in range(k):
         v = np.random.randn(n)
-        v = v / np.linalg.norm(v)
+        v = v / _norm(v)
 
         for __ in range(max_iter):
             v_new = AtA @ v
-            v_new = v_new / np.linalg.norm(v_new)
-            if np.linalg.norm(v_new - v) < tol:
+            v_new = v_new / _norm(v_new)
+            if _norm(v_new - v) < tol:
                 break
             v = v_new
 
-        sigma = np.linalg.norm(A @ v)
+        sigma = _norm(A @ v)
         u = (A @ v) / (sigma + 1e-12)
 
         V_cols.append(v)
@@ -161,9 +224,8 @@ def power_method_svd(A: np.ndarray, k: int = 3, max_iter: int = 100, tol: float 
     return U, Sigma, Vt
 
 
-# ------------------------------------------------------------------
 # 3. Interpretare conceptuală a grupurilor
-# ------------------------------------------------------------------
+
 
 def print_group_loadings(Vt: np.ndarray, singular_values: np.ndarray, feature_names: list):
     """
@@ -234,9 +296,8 @@ def print_variance_explained(singular_values: np.ndarray):
     print(f"\n✅ Varianța explicată salvată în: {RESULTS_DIR}/svd_variance_explained.csv")
 
 
-# ------------------------------------------------------------------
 # 4. Vizualizări
-# ------------------------------------------------------------------
+
 
 def plot_singular_values(singular_values: np.ndarray):
     """Scree plot pentru valorile singulare."""
@@ -341,10 +402,7 @@ def plot_group_contributions(Vt: np.ndarray, singular_values: np.ndarray, featur
     plt.close()
     print("[OK] 15_svd_group_contributions.png")
 
-
-# ------------------------------------------------------------------
 # 5. MAIN
-# ------------------------------------------------------------------
 
 def main():
     print("=" * 60)
@@ -365,9 +423,12 @@ def main():
     print(f"Σ shape:   ({len(singular_values)}, {len(singular_values)})")
     print(f"Vᵀ shape:  {Vt.shape}")
 
-    # Verificare reconstrucție
+    # Verificare reconstrucție (norma Frobenius calculată manual)
     A_reconstructed = U @ np.diag(singular_values) @ Vt
-    reconstr_error = np.linalg.norm(A - A_reconstructed, "fro") / np.linalg.norm(A, "fro")
+    diff = A - A_reconstructed
+    fro_diff = np.sqrt(np.sum(diff * diff))
+    fro_orig = np.sqrt(np.sum(A * A))
+    reconstr_error = fro_diff / fro_orig
     print(f"\nEroare reconstrucție (relativă, Frobenius): {reconstr_error:.2e}")
 
     # Interpretare
