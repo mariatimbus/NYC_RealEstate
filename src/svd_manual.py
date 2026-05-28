@@ -17,6 +17,8 @@ Implementare manuală folosind descompunerea în valori proprii pe AᵀA.
 
 import os
 import warnings
+import math
+import random
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -31,10 +33,79 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(CHARTS_DIR, exist_ok=True)
 
 
+# ---------------------------------------------------------------------------
+# Helperi manuali (fără np.funcții de matematică)
+# ---------------------------------------------------------------------------
+
+def _norm(x):
+    """Norma Euclidiană (L2) manuală."""
+    return math.sqrt(sum(float(xi) ** 2 for xi in x))
+
+
+def _argsort_desc(arr):
+    """Argsort descrescător manual."""
+    indexed = [(float(arr[i]), i) for i in range(len(arr))]
+    indexed.sort(key=lambda t: t[0], reverse=True)
+    return [idx for _, idx in indexed]
+
+
+def _diag_extract(A):
+    """Extrage diagonala principală ca listă."""
+    n = min(A.shape[0], A.shape[1])
+    return [float(A[i, i]) for i in range(n)]
+
+
+def _diag_matrix(d):
+    """Creează matrice diagonală din listă."""
+    n = len(d)
+    A = np.zeros((n, n))
+    for i in range(n):
+        A[i, i] = d[i]
+    return A
+
+
+def _cumsum(arr):
+    """Sumă cumulativă manuală."""
+    result = []
+    s = 0.0
+    for x in arr:
+        s += x
+        result.append(s)
+    return result
+
+
+def _randn(n):
+    """Generează n valori N(0,1) folosind Box-Muller."""
+    result = []
+    while len(result) < n:
+        u1 = random.random()
+        u2 = random.random()
+        if u1 == 0:
+            continue
+        mag = math.sqrt(-2.0 * math.log(u1))
+        z1 = mag * math.cos(2.0 * math.pi * u2)
+        z2 = mag * math.sin(2.0 * math.pi * u2)
+        result.append(z1)
+        if len(result) < n:
+            result.append(z2)
+    return np.array(result)
+
+
+def _outer(u, v):
+    """Produs exterior manual."""
+    m, n = len(u), len(v)
+    A = np.zeros((m, n))
+    for i in range(m):
+        ui = float(u[i])
+        for j in range(n):
+            A[i, j] = ui * float(v[j])
+    return A
+
+
 # 1. Încărcare & preprocesare
 
 
-def load_and_preprocess(path: str) -> pd.DataFrame:
+def load_and_preprocess(path: str):
     """Încarcă datele și encodează variabilele categorice."""
     df = pd.read_csv(path)
     print(f"Dataset încărcat: {len(df):,} rânduri × {len(df.columns)} coloane")
@@ -62,25 +133,36 @@ def load_and_preprocess(path: str) -> pd.DataFrame:
     return df
 
 
-def standardize(df: pd.DataFrame) -> np.ndarray:
+def standardize(df):
     """Z-score standardizare (zero mean, unit variance)."""
     A = df.values.astype(np.float64)
-    means = A.mean(axis=0)
-    stds = A.std(axis=0, ddof=0)
-    stds[stds == 0] = 1.0  # evităm împărțirea la 0
-    return (A - means) / stds
+    m, n = A.shape
+    means = [sum(float(A[i, j]) for i in range(m)) / m for j in range(n)]
+    stds = []
+    for j in range(n):
+        var = sum((float(A[i, j]) - means[j]) ** 2 for i in range(m)) / m
+        stds.append(math.sqrt(var) if var > 0 else 1.0)
+    # evităm împărțirea la 0
+    stds = [s if s > 0 else 1.0 for s in stds]
+    for i in range(m):
+        for j in range(n):
+            A[i, j] = (A[i, j] - means[j]) / stds[j]
+    return A
+
 
 # 2. SVD MANUAL — folosind AᵀA eigen-decomposition
 
 
-def jacobi_eigen_decomposition(M: np.ndarray, max_iter: int = 100, tol: float = 1e-10):
+def jacobi_eigen_decomposition(M, max_iter: int = 100, tol: float = 1e-10):
     """
     Metoda Jacobi pentru descompunerea unei matrice simetrice în valori proprii.
     Returnează (eigvals, eigvecs) unde coloanele lui eigvecs sunt vectorii proprii.
     """
     n = M.shape[0]
     A = M.copy()
-    V = np.eye(n)
+    V = np.zeros((n, n))
+    for i in range(n):
+        V[i, i] = 1.0
 
     for _ in range(max_iter):
         # Găsim cel mai mare element off-diagonal
@@ -97,12 +179,12 @@ def jacobi_eigen_decomposition(M: np.ndarray, max_iter: int = 100, tol: float = 
 
         # Calculăm unghiul de rotație
         if abs(A[p, p] - A[q, q]) < 1e-12:
-            theta = np.pi / 4
+            theta = math.pi / 4
         else:
-            theta = 0.5 * np.arctan2(2.0 * A[p, q], A[q, q] - A[p, p])
+            theta = 0.5 * math.atan2(2.0 * A[p, q], A[q, q] - A[p, p])
 
-        c = np.cos(theta)
-        s = np.sin(theta)
+        c = math.cos(theta)
+        s = math.sin(theta)
 
         # Salvăm valorile vechi
         app = A[p, p]
@@ -129,11 +211,11 @@ def jacobi_eigen_decomposition(M: np.ndarray, max_iter: int = 100, tol: float = 
             V[i, p] = c * v_ip - s * v_iq
             V[i, q] = s * v_ip + c * v_iq
 
-    eigvals = np.diag(A)
-    return eigvals, V
+    eigvals = _diag_extract(A)
+    return np.array(eigvals), V
 
 
-def manual_svd(A: np.ndarray, k: int = None):
+def manual_svd(A, k: int = None):
     """
     Calculează SVD manual:
         A = U · Σ · Vᵀ
@@ -155,8 +237,8 @@ def manual_svd(A: np.ndarray, k: int = None):
     eigvals, eigvecs = jacobi_eigen_decomposition(M)
 
     # Sortăm descrescător după valori proprii
-    idx = np.argsort(eigvals)[::-1]
-    eigvals = eigvals[idx]
+    idx = _argsort_desc(eigvals)
+    eigvals = [eigvals[i] for i in idx]
     eigvecs = eigvecs[:, idx]
 
     # Pasul 3: V și Σ
@@ -164,12 +246,12 @@ def manual_svd(A: np.ndarray, k: int = None):
     V = eigvecs[:, :k]
 
     # Valori singulare (doar cele pozitive)
-    singular_values = np.sqrt(np.maximum(eigvals[:k], 0.0))
-    Sigma = np.diag(singular_values)
+    singular_values = [math.sqrt(max(v, 0.0)) for v in eigvals[:k]]
+    Sigma = _diag_matrix(singular_values)
 
     # Pasul 4: U = A · V · Σ⁻¹
     # Evităm împărțirea la 0 pentru σ≈0
-    Sigma_inv = np.diag(1.0 / (singular_values + 1e-12))
+    Sigma_inv = _diag_matrix([1.0 / (s + 1e-12) for s in singular_values])
     U = A @ V @ Sigma_inv
 
     # Păstrăm doar primele k coloane pentru U
@@ -178,12 +260,7 @@ def manual_svd(A: np.ndarray, k: int = None):
     return U, singular_values, V.T
 
 
-def _norm(x: np.ndarray) -> float:
-    """Norma Euclidiană (L2) calculată manual."""
-    return np.sqrt(np.sum(x * x))
-
-
-def power_method_svd(A: np.ndarray, k: int = 3, max_iter: int = 100, tol: float = 1e-10):
+def power_method_svd(A, k: int = 3, max_iter: int = 100, tol: float = 1e-10):
     """
     (Opțional) Power iteration pentru primele k componente singulare.
     Util pentru înțelegere, dar mai lent decât eigen-decomposition.
@@ -196,7 +273,7 @@ def power_method_svd(A: np.ndarray, k: int = 3, max_iter: int = 100, tol: float 
     AtA = A.T @ A
 
     for _ in range(k):
-        v = np.random.randn(n)
+        v = _randn(n)
         v = v / _norm(v)
 
         for __ in range(max_iter):
@@ -214,12 +291,17 @@ def power_method_svd(A: np.ndarray, k: int = 3, max_iter: int = 100, tol: float 
         sigmas.append(sigma)
 
         # Deflație: eliminăm componenta găsită
-        A = A - sigma * np.outer(u, v)
+        A = A - sigma * _outer(u, v)
         AtA = A.T @ A
 
-    U = np.column_stack(U_cols)
-    Sigma = np.diag(sigmas)
-    Vt = np.row_stack([v.T for v in V_cols])
+    # Construim matricile manual
+    U = np.zeros((m, k))
+    for j in range(k):
+        U[:, j] = U_cols[j]
+    Sigma = _diag_matrix(sigmas)
+    Vt = np.zeros((k, n))
+    for j in range(k):
+        Vt[j, :] = V_cols[j]
 
     return U, Sigma, Vt
 
@@ -227,7 +309,7 @@ def power_method_svd(A: np.ndarray, k: int = 3, max_iter: int = 100, tol: float 
 # 3. Interpretare conceptuală a grupurilor
 
 
-def print_group_loadings(Vt: np.ndarray, singular_values: np.ndarray, feature_names: list):
+def print_group_loadings(Vt, singular_values, feature_names):
     """
     Afișează contribuția fiecărei caracteristici în fiecare componentă (loadings).
     Loadings = V · Σ  (fiecare componentă înmulțită cu importanța sa).
@@ -271,12 +353,12 @@ def print_group_loadings(Vt: np.ndarray, singular_values: np.ndarray, feature_na
     print(f"\n✅ Loadings salvați în: {RESULTS_DIR}/svd_loadings.csv")
 
 
-def print_variance_explained(singular_values: np.ndarray):
+def print_variance_explained(singular_values):
     """Afișează varianța explicată de fiecare componentă."""
-    variances = singular_values ** 2
-    total_var = variances.sum()
-    explained = variances / total_var
-    cumsum = np.cumsum(explained)
+    variances = [s ** 2 for s in singular_values]
+    total_var = sum(variances)
+    explained = [v / total_var for v in variances]
+    cumsum = _cumsum(explained)
 
     print("\n" + "=" * 60)
     print("VARIANȚA EXPLICATĂ DE FIECARE COMPONENTĂ")
@@ -299,7 +381,7 @@ def print_variance_explained(singular_values: np.ndarray):
 # 4. Vizualizări
 
 
-def plot_singular_values(singular_values: np.ndarray):
+def plot_singular_values(singular_values):
     """Scree plot pentru valorile singulare."""
     plt.figure(figsize=(10, 5))
     plt.plot(range(1, len(singular_values) + 1), singular_values, marker="o", color="steelblue")
@@ -313,7 +395,7 @@ def plot_singular_values(singular_values: np.ndarray):
     print("[OK] 12_svd_scree_plot.png")
 
 
-def plot_loadings_heatmap(Vt: np.ndarray, singular_values: np.ndarray, feature_names: list):
+def plot_loadings_heatmap(Vt, singular_values, feature_names):
     """Heatmap pentru loadings (primele 5 componente)."""
     loadings = Vt.T * singular_values
     loadings_df = pd.DataFrame(
@@ -338,7 +420,7 @@ def plot_loadings_heatmap(Vt: np.ndarray, singular_values: np.ndarray, feature_n
     print("[OK] 13_svd_loadings_heatmap.png")
 
 
-def plot_biplot(A: np.ndarray, U: np.ndarray, Vt: np.ndarray, feature_names: list):
+def plot_biplot(A, U, Vt, feature_names):
     """
     Biplot 2D: proiecția datelor în spațiul primelor 2 componente singulare.
     """
@@ -349,7 +431,7 @@ def plot_biplot(A: np.ndarray, U: np.ndarray, Vt: np.ndarray, feature_names: lis
 
     # Pentru vizibilitate, sample 2000 puncte
     if len(Z) > 2000:
-        idx = np.random.choice(len(Z), 2000, replace=False)
+        idx = random.sample(range(len(Z)), 2000)
         Z = Z[idx]
 
     plt.figure(figsize=(10, 8))
@@ -366,7 +448,7 @@ def plot_biplot(A: np.ndarray, U: np.ndarray, Vt: np.ndarray, feature_names: lis
     print("[OK] 14_svd_biplot.png")
 
 
-def plot_group_contributions(Vt: np.ndarray, singular_values: np.ndarray, feature_names: list):
+def plot_group_contributions(Vt, singular_values, feature_names):
     """
     Bar plot cu contribuția absolută a fiecărui grup de caracteristici
     pentru primele 3 componente.
@@ -402,6 +484,7 @@ def plot_group_contributions(Vt: np.ndarray, singular_values: np.ndarray, featur
     plt.close()
     print("[OK] 15_svd_group_contributions.png")
 
+
 # 5. MAIN
 
 def main():
@@ -424,10 +507,10 @@ def main():
     print(f"Vᵀ shape:  {Vt.shape}")
 
     # Verificare reconstrucție (norma Frobenius calculată manual)
-    A_reconstructed = U @ np.diag(singular_values) @ Vt
+    A_reconstructed = U @ _diag_matrix(singular_values) @ Vt
     diff = A - A_reconstructed
-    fro_diff = np.sqrt(np.sum(diff * diff))
-    fro_orig = np.sqrt(np.sum(A * A))
+    fro_diff = math.sqrt(sum(float(diff[i, j]) ** 2 for i in range(diff.shape[0]) for j in range(diff.shape[1])))
+    fro_orig = math.sqrt(sum(float(A[i, j]) ** 2 for i in range(A.shape[0]) for j in range(A.shape[1])))
     reconstr_error = fro_diff / fro_orig
     print(f"\nEroare reconstrucție (relativă, Frobenius): {reconstr_error:.2e}")
 
@@ -442,10 +525,10 @@ def main():
     plot_biplot(A, U, Vt, feature_names)
     plot_group_contributions(Vt, singular_values, feature_names)
 
-    # Salvare rezultate brute
-    np.save(os.path.join(RESULTS_DIR, "svd_U.npy"), U[:, :5])
-    np.save(os.path.join(RESULTS_DIR, "svd_Sigma.npy"), np.diag(singular_values[:5]))
-    np.save(os.path.join(RESULTS_DIR, "svd_Vt.npy"), Vt[:5, :])
+    # Salvare rezultate brute (CSV în loc de npy)
+    pd.DataFrame(U[:, :5]).to_csv(os.path.join(RESULTS_DIR, "svd_U.csv"), index=False)
+    pd.DataFrame(_diag_matrix(singular_values[:5])).to_csv(os.path.join(RESULTS_DIR, "svd_Sigma.csv"), index=False)
+    pd.DataFrame(Vt[:5, :]).to_csv(os.path.join(RESULTS_DIR, "svd_Vt.csv"), index=False)
     print(f"\n✅ Matricile U, Σ, Vᵀ (primele 5 componente) salvate în {RESULTS_DIR}/")
 
     print("\n" + "=" * 60)

@@ -7,7 +7,7 @@ Folosește: data/cleaned_dataset.csv
 import os
 import warnings
 import pandas as pd
-import numpy as np
+import math
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
@@ -121,9 +121,9 @@ def kmeans_clustering(df: pd.DataFrame) -> None:
         X[col] = X[col].clip(low, high)
 
     # Log-transform SALE PRICE and sqft to reduce skewness
-    X["SALE_PRICE_LOG"] = np.log1p(X["SALE PRICE"])
-    X["GROSS_SQFT_LOG"] = np.log1p(X["GROSS SQUARE FEET"])
-    X["LAND_SQFT_LOG"] = np.log1p(X["LAND SQUARE FEET"])
+    X["SALE_PRICE_LOG"] = X["SALE PRICE"].apply(math.log1p)
+    X["GROSS_SQFT_LOG"] = X["GROSS SQUARE FEET"].apply(math.log1p)
+    X["LAND_SQFT_LOG"] = X["LAND SQUARE FEET"].apply(math.log1p)
 
     cluster_features = [
         "SALE_PRICE_LOG", "TOTAL UNITS", "RESIDENTIAL UNITS",

@@ -1,34 +1,125 @@
+import math
 import numpy as np
+
+
+def _norm(x):
+    """Norma Euclidiană (L2) calculată manual."""
+    return math.sqrt(float(sum(xi * xi for xi in x)))
+
+
+def _sign(x):
+    """Semn manual."""
+    if x > 0:
+        return 1.0
+    elif x < 0:
+        return -1.0
+    return 0.0
+
+
+def _outer(v, w):
+    """Produs exterior manual: v * w^T."""
+    v = np.asarray(v)
+    w = np.asarray(w)
+    m, n = len(v), len(w)
+    result = np.zeros((m, n))
+    for i in range(m):
+        vi = float(v[i])
+        row = result[i]
+        for j in range(n):
+            row[j] = vi * float(w[j])
+    return result
+
+
+def _eye(n):
+    """Matrice identitate manuală."""
+    I = np.zeros((n, n))
+    for i in range(n):
+        I[i, i] = 1.0
+    return I
+
+
+def _zeros(m, n):
+    """Matrice zero manuală."""
+    return np.zeros((m, n))
+
+
+def _diag(A):
+    """Extrage diagonala unei matrice."""
+    n = min(A.shape[0], A.shape[1])
+    return np.array([float(A[i, i]) for i in range(n)])
+
+
+def _diag_matrix(d):
+    """Creează matrice diagonală dintr-un vector."""
+    n = len(d)
+    A = np.zeros((n, n))
+    for i in range(n):
+        A[i, i] = d[i]
+    return A
+
+
+def _tril(A, k=0):
+    """Păstrează elementele de sub diagonala k (inclusiv)."""
+    m, n = A.shape
+    R = np.zeros((m, n))
+    for i in range(m):
+        for j in range(n):
+            if j <= i + k:
+                R[i, j] = A[i, j]
+    return R
+
+
+def _triu(A, k=0):
+    """Păstrează elementele deasupra diagonalei k (inclusiv)."""
+    m, n = A.shape
+    R = np.zeros((m, n))
+    for i in range(m):
+        for j in range(n):
+            if j >= i + k:
+                R[i, j] = A[i, j]
+    return R
+
+
+def _argsort_desc(arr):
+    """Argsort descrescător manual."""
+    indexed = [(float(arr[i]), i) for i in range(len(arr))]
+    indexed.sort(key=lambda x: x[0], reverse=True)
+    return [idx for _, idx in indexed]
+
+
+def _sqrt_arr(arr):
+    """Rădăcină pătrată element-cu-element, manual."""
+    return np.array([math.sqrt(x) if x > 0 else 0.0 for x in arr])
 
 
 def Tridiag_Householder(A):
     n = A.shape[0]
     T = np.copy(A).astype(float)
-    Q = np.eye(n)
+    Q = _eye(n)
 
     for k in range(n - 2):
         x = T[k + 1:, k].copy()
-        norm_x = np.linalg.norm(x)
+        norm_x = _norm(x)
 
         if abs(norm_x) < 1e-14:
             continue
 
-        sgn = np.sign(x[0]) if abs(x[0]) > 1e-14 else 1.0
+        sgn = _sign(x[0]) if abs(x[0]) > 1e-14 else 1.0
         x[0] += sgn * norm_x
-        v = x / np.linalg.norm(x)
+        v = x / _norm(x)
 
         # Apply Householder reflection from the left:  T = H @ T
-        T[k + 1:, :] -= 2 * np.outer(v, v @ T[k + 1:, :])
+        T[k + 1:, :] -= 2.0 * _outer(v, v @ T[k + 1:, :])
 
         # Apply Householder reflection from the right: T = T @ H
-        T[:, k + 1:] -= 2 * np.outer(T[:, k + 1:] @ v, v)
+        T[:, k + 1:] -= 2.0 * _outer(T[:, k + 1:] @ v, v)
 
         # Accumulate orthogonal transformations
-        Q[:, k + 1:] -= 2 * np.outer(Q[:, k + 1:] @ v, v)
+        Q[:, k + 1:] -= 2.0 * _outer(Q[:, k + 1:] @ v, v)
 
     # Force exact tridiagonal symmetry (clean numerical noise)
-    T = np.tril(np.triu(T, -1), 1)
-    T = (T + T.T) / 2
+    T = _tril(_triu(T, -1), 1)
+    T = (T + T.T) / 2.0
 
     return Q, T
 
@@ -45,11 +136,11 @@ def _qr_step_tridiag_explicit(T_block):
 
     # Wilkinson shift
     delta = (T_shifted[n - 2, n - 2] - T_shifted[n - 1, n - 1]) / 2.0
-    sign = np.sign(delta) if abs(delta) > 1e-14 else 1.0
+    sign = _sign(delta) if abs(delta) > 1e-14 else 1.0
     mu = T_shifted[n - 1, n - 1] - T_shifted[n - 2, n - 1] ** 2 / (
-        delta + sign * np.sqrt(delta ** 2 + T_shifted[n - 2, n - 1] ** 2)
+        delta + sign * math.sqrt(delta ** 2 + T_shifted[n - 2, n - 1] ** 2)
     )
-    T_shifted -= mu * np.eye(n)
+    T_shifted -= mu * _eye(n)
 
     rotations = []
 
@@ -57,7 +148,7 @@ def _qr_step_tridiag_explicit(T_block):
     for k in range(n - 1):
         a = T_shifted[k, k]
         b = T_shifted[k + 1, k]
-        r = np.hypot(a, b)
+        r = math.hypot(a, b)
         if r < 1e-14:
             rotations.append((1.0, 0.0))
             continue
@@ -79,11 +170,11 @@ def _qr_step_tridiag_explicit(T_block):
         T_shifted[:, k] = c * col_k + s * col_k1
         T_shifted[:, k + 1] = -s * col_k + c * col_k1
 
-    T_new = T_shifted + mu * np.eye(n)
+    T_new = T_shifted + mu * _eye(n)
 
     # Clean numerical noise below tridiagonal band
-    T_new = np.tril(np.triu(T_new, -1), 1)
-    T_new = (T_new + T_new.T) / 2
+    T_new = _tril(_triu(T_new, -1), 1)
+    T_new = (T_new + T_new.T) / 2.0
 
     return T_new, rotations
 
@@ -133,7 +224,7 @@ def QR_iteration(A, Q, TOL=1e-6):
             T[active_end - 2, active_end - 1] = 0.0
             active_end -= 1
 
-    D = np.diag(np.diag(T))
+    D = _diag_matrix(_diag(T))
     return D, V
 
 
@@ -150,24 +241,23 @@ def SVD(A, TOL=1e-14):
     # Pasul 2: Aflam valorile proprii ale lui A.T @ A (QR manual cu deflatie)
     D, V = QR_iteration(B, Q0)
 
-    val = np.diag(D)
+    val = _diag(D)
 
     # Pasul 3: Sortam valorile proprii descrescator
-    indici = np.argsort(val)[::-1]
+    indici = _argsort_desc(val)
 
     val = val[indici]
     V = V[:, indici]
 
     val[val < 0] = 0
-    sigma = np.sqrt(val)
+    sigma = _sqrt_arr(val)
 
-    S = np.zeros((n, n))
-
+    S = _zeros(n, n)
     for i in range(n):
         S[i, i] = sigma[i]
 
     # Pasul 4: Vectorii singulari la stanga U (economy size m x n)
-    U = np.zeros((m, n))
+    U = _zeros(m, n)
 
     for i in range(n):
         if sigma[i] > TOL:

@@ -5,13 +5,16 @@ Grafice extra — leagă anomaly detection, clusters, SVD și under/over-valued.
 
 import os
 import warnings
-import numpy as np
+import math
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge
 from sklearn.cluster import KMeans
 from sklearn.ensemble import IsolationForest
+
+from custom_svd import SVD
+from manual_math import percentile, argsort_desc
 
 warnings.filterwarnings("ignore")
 
@@ -31,8 +34,8 @@ def prepare(df):
     for col in feature_cols:
         low, high = X[col].quantile([0.01, 0.99])
         X[col] = X[col].clip(low, high)
-    X["GROSS_SQFT_LOG"] = np.log1p(X["GROSS SQUARE FEET"])
-    X["LAND_SQFT_LOG"] = np.log1p(X["LAND SQUARE FEET"])
+    X["GROSS_SQFT_LOG"] = X["GROSS SQUARE FEET"].apply(math.log1p)
+    X["LAND_SQFT_LOG"] = X["LAND SQUARE FEET"].apply(math.log1p)
 
     features = [
         "TOTAL UNITS", "RESIDENTIAL UNITS",
@@ -46,13 +49,14 @@ def prepare(df):
 def main():
     df = pd.read_csv(INPUT_PATH)
     X_scaled, scaler, feature_names, X_raw = prepare(df)
-    y_actual = df["SALE PRICE"].values
-    y_log = np.log1p(y_actual)
+    y_actual = df["SALE PRICE"].values.tolist()
+    y_log = [math.log1p(v) for v in y_actual]
 
     # ── Modele ──
     ridge = Ridge(alpha=1.0)
     ridge.fit(X_scaled, y_log)
-    y_pred = np.expm1(ridge.predict(X_scaled))
+    y_pred_log = ridge.predict(X_scaled).tolist()
+    y_pred = [math.expm1(v) for v in y_pred_log]
 
     km = KMeans(n_clusters=4, random_state=42, n_init=10)
     km_labels = km.fit_predict(X_scaled)
@@ -60,10 +64,20 @@ def main():
     if_model = IsolationForest(n_estimators=200, contamination=0.05, random_state=42, n_jobs=-1)
     if_labels = if_model.fit_predict(X_scaled)
 
-    U, s, Vt = np.linalg.svd(X_scaled, full_matrices=False)
-    X_rec = U[:, :5] @ np.diag(s[:5]) @ Vt[:5, :]
-    svd_err = np.sum((X_scaled - X_rec) ** 2, axis=1)
-    svd_anom = svd_err > np.percentile(svd_err, 95)
+    U, S_mat, V = SVD(X_scaled)
+    X_rec = U[:, :5] @ S_mat[:5, :5] @ V[:, :5].T
+
+    # SVD reconstruction error — calculat manual
+    svd_err = []
+    for i in range(len(X_scaled)):
+        s = 0.0
+        for j in range(X_scaled.shape[1]):
+            diff = float(X_scaled[i, j]) - float(X_rec[i, j])
+            s += diff * diff
+        svd_err.append(s)
+
+    svd_threshold = percentile(svd_err, 95)
+    svd_anom = [e > svd_threshold for e in svd_err]
 
     df_plot = pd.DataFrame({
         "price": y_actual,
@@ -73,18 +87,23 @@ def main():
         "neighborhood": df["NEIGHBORHOOD"],
         "building_class": df["BUILDING CLASS CATEGORY"],
         "cluster": km_labels,
-        "if_anomaly": if_labels == -1,
+        "if_anomaly": [l == -1 for l in if_labels],
         "svd_anomaly": svd_anom,
     })
     df_plot["residual"] = df_plot["price"] - df_plot["pred"]
-    df_plot["residual_pct"] = df_plot["residual"] / np.maximum(df_plot["pred"], 1) * 100
+    df_plot["residual_pct"] = [
+        res / max(pred, 1) * 100 for res, pred in zip(df_plot["residual"], df_plot["pred"])
+    ]
 
     # ── Grafic 1: Feature importance Ridge ──
     fig, ax = plt.subplots(figsize=(10, 5))
-    coefs = ridge.coef_
-    sorted_idx = np.argsort(np.abs(coefs))[::-1]
-    colors = ["green" if c > 0 else "red" for c in coefs[sorted_idx]]
-    ax.barh(np.array(feature_names)[sorted_idx], coefs[sorted_idx], color=colors, edgecolor="black", alpha=0.8)
+    coefs = ridge.coef_.tolist()
+    abs_coefs = [abs(c) for c in coefs]
+    sorted_idx = argsort_desc(abs_coefs)
+    colors = ["green" if coefs[i] > 0 else "red" for i in sorted_idx]
+    sorted_names = [feature_names[i] for i in sorted_idx]
+    sorted_vals = [coefs[i] for i in sorted_idx]
+    ax.barh(sorted_names, sorted_vals, color=colors, edgecolor="black", alpha=0.8)
     ax.set_xlabel("Coeficient Ridge (impact asupra log(preț))")
     ax.set_title("Feature Importance — Ridge Regression")
     ax.axvline(0, color="black", lw=0.8)
@@ -96,14 +115,15 @@ def main():
 
     # ── Grafic 2: Anomaly rate per cluster ──
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    methods = [("svd_anomaly", "SVD"), ("if_anomaly", "Isolation Forest"), ("svd_anomaly", "Both")]
 
     for ax, (col, title) in zip(axes, [("svd_anomaly", "SVD"), ("if_anomaly", "Isolation Forest"),
                                         ("svd_anomaly", "SVD + IF overlap")]):
         if title == "SVD + IF overlap":
-            rates = df_plot.groupby("cluster").apply(lambda g: (g["svd_anomaly"] & g["if_anomaly"]).mean() * 100)
+            rates = df_plot.groupby("cluster").apply(
+                lambda g: sum(g["svd_anomaly"] & g["if_anomaly"]) / len(g) * 100
+            )
         else:
-            rates = df_plot.groupby("cluster")[col].mean() * 100
+            rates = df_plot.groupby("cluster")[col].apply(lambda s: sum(s) / len(s) * 100)
         bars = ax.bar(rates.index, rates.values, color=["steelblue", "darkorange", "forestgreen", "crimson"],
                       edgecolor="black", alpha=0.8)
         ax.set_xlabel("Cluster K-Means")
@@ -113,7 +133,7 @@ def main():
         for bar, v in zip(bars, rates.values):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.3,
                     f"{v:.1f}%", ha="center", va="bottom", fontweight="bold")
-    plt.suptitle("Anomaly Rate per K-Means Cluster", fontsize=14, fontweight="bold")
+    plt.suptitle("Anomaly Rate per K-Means Cluster", fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig(os.path.join(CHARTS_DIR, "19_anomaly_rate_by_cluster.png"), dpi=150)
     plt.close()
@@ -128,21 +148,21 @@ def main():
     # Anomalii (toate 3 metode)
     mask_all = df_plot["svd_anomaly"] & df_plot["if_anomaly"]
     ax.scatter(df_plot.loc[mask_all, "sqft"], df_plot.loc[mask_all, "price"],
-               c="purple", s=30, alpha=0.7, marker="X", label=f"Anomalii confirmate ({mask_all.sum()})")
+               c="purple", s=30, alpha=0.7, marker="X", label=f"Anomalii confirmate ({sum(mask_all)})")
 
     # Undervalued (filtrat $100K-$200M, top 5% residual negativ)
     mask_uv = (df_plot["price"] >= 100_000) & (df_plot["price"] <= 200_000_000) & \
-              (df_plot["residual"] < np.percentile(df_plot["residual"], 5))
+              (df_plot["residual"] < percentile(df_plot["residual"].tolist(), 5))
     ax.scatter(df_plot.loc[mask_uv, "sqft"], df_plot.loc[mask_uv, "price"],
                c="green", s=20, alpha=0.6, edgecolors="darkgreen", linewidth=0.5,
-               label=f"Undervalued ({mask_uv.sum()})")
+               label=f"Undervalued ({sum(mask_uv)})")
 
     # Overvalued
     mask_ov = (df_plot["price"] >= 100_000) & (df_plot["price"] <= 200_000_000) & \
-              (df_plot["residual"] > np.percentile(df_plot["residual"], 95))
+              (df_plot["residual"] > percentile(df_plot["residual"].tolist(), 95))
     ax.scatter(df_plot.loc[mask_ov, "sqft"], df_plot.loc[mask_ov, "price"],
                c="red", s=20, alpha=0.6, edgecolors="darkred", linewidth=0.5,
-               label=f"Overvalued ({mask_ov.sum()})")
+               label=f"Overvalued ({sum(mask_ov)})")
 
     ax.set_xlabel("Gross Square Feet")
     ax.set_ylabel("Sale Price ($)")
@@ -161,13 +181,13 @@ def main():
     fig, ax = plt.subplots(figsize=(10, 6))
     scatter = ax.scatter(df_plot["price"], svd_err, c=df_plot["cluster"], cmap="tab10",
                          s=8, alpha=0.5, edgecolors="none")
-    ax.axhline(np.percentile(svd_err, 95), color="red", linestyle="--", lw=1.5,
+    ax.axhline(percentile(svd_err, 95), color="red", linestyle="--", lw=1.5,
                label=f"Anomaly threshold (95th pct)")
     ax.set_xlabel("Actual Sale Price ($)")
     ax.set_ylabel("SVD Reconstruction Error")
     ax.set_title("SVD Reconstruction Error vs Sale Price")
-    ax.set_xlim(0, np.percentile(df_plot["price"], 99))
-    ax.set_ylim(0, np.percentile(svd_err, 99.5))
+    ax.set_xlim(0, percentile(df_plot["price"].tolist(), 99))
+    ax.set_ylim(0, percentile(svd_err, 99.5))
     ax.legend()
     plt.colorbar(scatter, ax=ax, label="Cluster")
     ax.grid(True, alpha=0.3)

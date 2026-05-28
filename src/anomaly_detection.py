@@ -7,12 +7,15 @@ Compară trei metode: reconstruction error SVD, distanță față de centroid K-
 
 import os
 import warnings
-import numpy as np
+import math
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.ensemble import IsolationForest
+
+from custom_svd import SVD
+from manual_math import percentile, unique
 
 warnings.filterwarnings("ignore")
 
@@ -36,9 +39,9 @@ def prepare_features(df: pd.DataFrame):
         low, high = X[col].quantile([0.01, 0.99])
         X[col] = X[col].clip(low, high)
 
-    X["SALE_PRICE_LOG"] = np.log1p(X["SALE PRICE"])
-    X["GROSS_SQFT_LOG"] = np.log1p(X["GROSS SQUARE FEET"])
-    X["LAND_SQFT_LOG"] = np.log1p(X["LAND SQUARE FEET"])
+    X["SALE_PRICE_LOG"] = X["SALE PRICE"].apply(math.log1p)
+    X["GROSS_SQFT_LOG"] = X["GROSS SQUARE FEET"].apply(math.log1p)
+    X["LAND_SQFT_LOG"] = X["LAND SQUARE FEET"].apply(math.log1p)
 
     cluster_features = [
         "SALE_PRICE_LOG", "TOTAL UNITS", "RESIDENTIAL UNITS",
@@ -54,14 +57,24 @@ def prepare_features(df: pd.DataFrame):
 
 def svd_anomaly_scores(X_scaled, n_components=5):
     """Calculează reconstruction error folosind SVD."""
-    U, s, Vt = np.linalg.svd(X_scaled, full_matrices=False)
+    U, S_mat, V = SVD(X_scaled)
 
     U_k = U[:, :n_components]
-    s_k = s[:n_components]
-    Vt_k = Vt[:n_components, :]
+    S_k = S_mat[:n_components, :n_components]
+    V_k = V[:, :n_components]
 
-    X_reconstructed = U_k @ np.diag(s_k) @ Vt_k
-    reconstruction_error = np.sum((X_scaled - X_reconstructed) ** 2, axis=1)
+    X_reconstructed = U_k @ S_k @ V_k.T
+
+    # Reconstruction error — calculat manual, row-wise
+    m = len(X_scaled)
+    n = X_scaled.shape[1]
+    reconstruction_error = []
+    for i in range(m):
+        s = 0.0
+        for j in range(n):
+            diff = float(X_scaled[i, j]) - float(X_reconstructed[i, j])
+            s += diff * diff
+        reconstruction_error.append(s)
 
     return reconstruction_error
 
@@ -72,8 +85,17 @@ def kmeans_anomaly_scores(X_scaled, n_clusters=4):
     labels = kmeans.fit_predict(X_scaled)
     centroids = kmeans.cluster_centers_
 
-    # Distanță euclidiană până la centroidul propriului cluster
-    distances = np.linalg.norm(X_scaled - centroids[labels], axis=1)
+    # Distanță euclidiană până la centroidul propriului cluster — calculată manual
+    m = len(X_scaled)
+    n = X_scaled.shape[1]
+    distances = []
+    for i in range(m):
+        centroid = centroids[labels[i]]
+        s = 0.0
+        for j in range(n):
+            diff = float(X_scaled[i, j]) - float(centroid[j])
+            s += diff * diff
+        distances.append(math.sqrt(s))
 
     return distances, labels, kmeans
 
@@ -106,50 +128,50 @@ def main():
     # ── 1. SVD-based anomaly detection ──
     print("\n--- SVD Reconstruction Error ---")
     svd_scores = svd_anomaly_scores(X_scaled, n_components=5)
-    svd_threshold = np.percentile(svd_scores, 95)
-    svd_anomalies = svd_scores > svd_threshold
+    svd_threshold = percentile(svd_scores, 95)
+    svd_anomalies = [score > svd_threshold for score in svd_scores]
 
-    print(f"SVD anomalies detected: {svd_anomalies.sum():,} ({svd_anomalies.mean():.2%})")
+    print(f"SVD anomalies detected: {sum(svd_anomalies):,} ({sum(svd_anomalies)/len(svd_anomalies):.2%})")
 
     # ── 2. K-Means distance-based anomaly detection ──
     print("\n--- K-Means Cluster Distance ---")
     km_scores, km_labels, km_model = kmeans_anomaly_scores(X_scaled, n_clusters=4)
-    km_threshold = np.percentile(km_scores, 95)
-    km_anomalies = km_scores > km_threshold
+    km_threshold = percentile(km_scores, 95)
+    km_anomalies = [score > km_threshold for score in km_scores]
 
-    print(f"K-Means clusters: {np.unique(km_labels)}")
-    print(f"K-Means anomalies (top 5% distance): {km_anomalies.sum():,} ({km_anomalies.mean():.2%})")
+    print(f"K-Means clusters: {unique(list(km_labels))}")
+    print(f"K-Means anomalies (top 5% distance): {sum(km_anomalies):,} ({sum(km_anomalies)/len(km_anomalies):.2%})")
 
     # ── 3. Isolation Forest (AI) ──
     print("\n--- Isolation Forest (AI) ---")
     if_labels, if_scores, if_model = isolation_forest_anomalies(X_scaled, contamination=0.05)
-    if_anomalies = if_labels == -1
+    if_anomalies = [label == -1 for label in if_labels]
 
-    print(f"Isolation Forest anomalies: {if_anomalies.sum():,} ({if_anomalies.mean():.2%})")
+    print(f"Isolation Forest anomalies: {sum(if_anomalies):,} ({sum(if_anomalies)/len(if_anomalies):.2%})")
 
     # ── 4. Comparare între cele 3 metode ──
     print("\n--- Comparare 3 metode ---")
 
     # Perechi
-    svd_if = svd_anomalies & if_anomalies
-    svd_km = svd_anomalies & km_anomalies
-    km_if = km_anomalies & if_anomalies
-    all_three = svd_anomalies & km_anomalies & if_anomalies
-    none = ~svd_anomalies & ~km_anomalies & ~if_anomalies
+    svd_if = [a and b for a, b in zip(svd_anomalies, if_anomalies)]
+    svd_km = [a and b for a, b in zip(svd_anomalies, km_anomalies)]
+    km_if = [a and b for a, b in zip(km_anomalies, if_anomalies)]
+    all_three = [a and b and c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]
+    none = [not a and not b and not c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]
 
-    print(f"Normal (toate 3 agrează):       {none.sum():,} ({none.mean():.2%})")
-    print(f"SVD + K-Means (nu IF):          {svd_km.sum() - all_three.sum():,}")
-    print(f"SVD + Isolation Forest (nu KM): {svd_if.sum() - all_three.sum():,}")
-    print(f"K-Means + Isolation Forest (nu SVD): {km_if.sum() - all_three.sum():,}")
-    print(f"Toate 3 metodele (anomalie):    {all_three.sum():,} ({all_three.mean():.2%})")
-    print(f"Doar SVD:                       {(svd_anomalies & ~km_anomalies & ~if_anomalies).sum():,}")
-    print(f"Doar K-Means:                   {(km_anomalies & ~svd_anomalies & ~if_anomalies).sum():,}")
-    print(f"Doar Isolation Forest:          {(if_anomalies & ~svd_anomalies & ~km_anomalies).sum():,}")
+    print(f"Normal (toate 3 agrează):       {sum(none):,} ({sum(none)/len(none):.2%})")
+    print(f"SVD + K-Means (nu IF):          {sum(svd_km) - sum(all_three):,}")
+    print(f"SVD + Isolation Forest (nu KM): {sum(svd_if) - sum(all_three):,}")
+    print(f"K-Means + Isolation Forest (nu SVD): {sum(km_if) - sum(all_three):,}")
+    print(f"Toate 3 metodele (anomalie):    {sum(all_three):,} ({sum(all_three)/len(all_three):.2%})")
+    print(f"Doar SVD:                       {sum([a and not b and not c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]):,}")
+    print(f"Doar K-Means:                   {sum([not a and b and not c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]):,}")
+    print(f"Doar Isolation Forest:          {sum([not a and not b and c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]):,}")
 
     # Overlap percentages
-    print(f"\nOverlap SVD ↔ K-Means:  {svd_km.sum() / max(svd_anomalies.sum(), 1) * 100:.1f}%")
-    print(f"Overlap SVD ↔ IF:       {svd_if.sum() / max(svd_anomalies.sum(), 1) * 100:.1f}%")
-    print(f"Overlap K-Means ↔ IF:   {km_if.sum() / max(km_anomalies.sum(), 1) * 100:.1f}%")
+    print(f"\nOverlap SVD ↔ K-Means:  {sum(svd_km) / max(sum(svd_anomalies), 1) * 100:.1f}%")
+    print(f"Overlap SVD ↔ IF:       {sum(svd_if) / max(sum(svd_anomalies), 1) * 100:.1f}%")
+    print(f"Overlap K-Means ↔ IF:   {sum(km_if) / max(sum(km_anomalies), 1) * 100:.1f}%")
 
     # Salvează rezultatele
     results_df = pd.DataFrame({
@@ -175,24 +197,24 @@ def main():
     ax.scatter(df["GROSS SQUARE FEET"], df["SALE PRICE"], c="lightgray", s=3, alpha=0.3, label="Normal")
 
     # Doar SVD
-    mask = svd_anomalies & ~km_anomalies & ~if_anomalies
+    mask = [a and not b and not c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]
     ax.scatter(df.loc[mask, "GROSS SQUARE FEET"], df.loc[mask, "SALE PRICE"],
-               c="blue", s=20, alpha=0.6, label=f"Doar SVD ({mask.sum()})")
+               c="blue", s=20, alpha=0.6, label=f"Doar SVD ({sum(mask)})")
 
     # Doar K-Means
-    mask = km_anomalies & ~svd_anomalies & ~if_anomalies
+    mask = [not a and b and not c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]
     ax.scatter(df.loc[mask, "GROSS SQUARE FEET"], df.loc[mask, "SALE PRICE"],
-               c="orange", s=20, alpha=0.6, label=f"Doar K-Means ({mask.sum()})")
+               c="orange", s=20, alpha=0.6, label=f"Doar K-Means ({sum(mask)})")
 
     # Doar IF
-    mask = if_anomalies & ~svd_anomalies & ~km_anomalies
+    mask = [not a and not b and c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]
     ax.scatter(df.loc[mask, "GROSS SQUARE FEET"], df.loc[mask, "SALE PRICE"],
-               c="red", s=20, alpha=0.6, label=f"Doar IF ({mask.sum()})")
+               c="red", s=20, alpha=0.6, label=f"Doar IF ({sum(mask)})")
 
     # Ambele / toate 3
-    mask = svd_anomalies & km_anomalies & if_anomalies
+    mask = all_three
     ax.scatter(df.loc[mask, "GROSS SQUARE FEET"], df.loc[mask, "SALE PRICE"],
-               c="purple", s=40, alpha=0.9, marker="X", label=f"Toate 3 ({mask.sum()})")
+               c="purple", s=40, alpha=0.9, marker="X", label=f"Toate 3 ({sum(mask)})")
 
     ax.set_xlabel("Gross Square Feet")
     ax.set_ylabel("Sale Price ($)")
@@ -210,7 +232,7 @@ def main():
     ax.set_ylabel("Count")
     ax.set_title("Distribuție SVD Reconstruction Error")
     ax.legend()
-    ax.set_xlim(0, np.percentile(svd_scores, 99.5))
+    ax.set_xlim(0, percentile(svd_scores, 99.5))
 
     # (3) Histogramă K-Means distances
     ax = axes[0, 2]
@@ -220,7 +242,7 @@ def main():
     ax.set_ylabel("Count")
     ax.set_title("Distribuție K-Means Centroid Distance")
     ax.legend()
-    ax.set_xlim(0, np.percentile(km_scores, 99.5))
+    ax.set_xlim(0, percentile(km_scores, 99.5))
 
     # (4) Histogramă Isolation Forest
     ax = axes[1, 0]
@@ -236,14 +258,14 @@ def main():
     categories = ["Normal", "Doar\nSVD", "Doar\nK-Means", "Doar\nIF",
                   "SVD+\nKM", "SVD+\nIF", "KM+\nIF", "Toate\n3"]
     counts = [
-        none.sum(),
-        (svd_anomalies & ~km_anomalies & ~if_anomalies).sum(),
-        (km_anomalies & ~svd_anomalies & ~if_anomalies).sum(),
-        (if_anomalies & ~svd_anomalies & ~km_anomalies).sum(),
-        (svd_anomalies & km_anomalies & ~if_anomalies).sum(),
-        (svd_anomalies & if_anomalies & ~km_anomalies).sum(),
-        (km_anomalies & if_anomalies & ~svd_anomalies).sum(),
-        all_three.sum(),
+        sum(none),
+        sum([a and not b and not c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]),
+        sum([not a and b and not c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]),
+        sum([not a and not b and c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]),
+        sum([a and b and not c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]),
+        sum([a and not b and c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]),
+        sum([not a and b and c for a, b, c in zip(svd_anomalies, km_anomalies, if_anomalies)]),
+        sum(all_three),
     ]
     colors = ["lightgray", "blue", "darkorange", "red",
               "purple", "purple", "purple", "black"]
@@ -267,7 +289,7 @@ def main():
     plt.colorbar(scatter, ax=ax, label="Cluster")
     ax.grid(True, alpha=0.3)
 
-    plt.suptitle("Detectare Anomalii — SVD vs K-Means vs Isolation Forest", fontsize=14, fontweight="bold")
+    plt.suptitle("Detectare Anomalii — SVD vs K-Means vs Isolation Forest", fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig(os.path.join(CHARTS_DIR, "16_anomaly_detection_comparison.png"), dpi=150)
     plt.close()
@@ -275,7 +297,7 @@ def main():
 
     # ── 6. Top anomalii confirmate de toate 3 metodele ──
     print("\n--- Top 10 anomalii confirmate (toate 3 metodele) ---")
-    top_all = results_df[all_three].nlargest(10, "SVD_SCORE")
+    top_all = results_df[[a for a in all_three]].nlargest(10, "SVD_SCORE")
     print(top_all[["SALE_PRICE", "GROSS_SQUARE_FEET", "NEIGHBORHOOD", "CLUSTER",
                     "SVD_SCORE", "KM_SCORE", "IF_SCORE"]].to_string(index=False))
 

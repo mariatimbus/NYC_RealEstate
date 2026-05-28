@@ -10,11 +10,13 @@ Etapa: calculează reziduurile r = y_real − y_predicted,
 
 import os
 import warnings
-import numpy as np
+import math
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge
+
+from manual_math import percentile, argsort_desc
 
 warnings.filterwarnings("ignore")
 
@@ -50,8 +52,8 @@ def load_and_prepare(path: str):
         X[col] = X[col].clip(low, high)
 
     # Log-transform pentru suprafețe (distribuție skewed)
-    X["GROSS_SQFT_LOG"] = np.log1p(X["GROSS SQUARE FEET"])
-    X["LAND_SQFT_LOG"] = np.log1p(X["LAND SQUARE FEET"])
+    X["GROSS_SQFT_LOG"] = X["GROSS SQUARE FEET"].apply(math.log1p)
+    X["LAND_SQFT_LOG"] = X["LAND SQUARE FEET"].apply(math.log1p)
 
     # One-Hot Encoding pentru categorice
     cat_cols = ["NEIGHBORHOOD", "BUILDING CLASS CATEGORY", "BUILDING CLASS AT PRESENT"]
@@ -65,8 +67,8 @@ def load_and_prepare(path: str):
     ], axis=1)
 
     # Target: log(SALE PRICE) — stabilizează varianța
-    y_actual = df["SALE PRICE"].values
-    y_log = np.log1p(y_actual)
+    y_actual = df["SALE PRICE"].values.tolist()
+    y_log = [math.log1p(v) for v in y_actual]
 
     # Standardizare
     scaler = StandardScaler()
@@ -81,8 +83,8 @@ def train_and_predict(X, y_log):
     """
     model = Ridge(alpha=1.0)
     model.fit(X, y_log)
-    y_pred_log = model.predict(X)
-    y_pred = np.expm1(y_pred_log)
+    y_pred_log = model.predict(X).tolist()
+    y_pred = [math.expm1(v) for v in y_pred_log]
     return model, y_pred
 
 
@@ -91,8 +93,8 @@ def compute_residuals(y_actual, y_pred):
     Calculează reziduurile: r = y_real − y_predicted.
     Returnează reziduu absolut ($) și procentual (%).
     """
-    residual = y_actual - y_pred
-    residual_pct = residual / np.maximum(y_pred, 1) * 100
+    residual = [a - p for a, p in zip(y_actual, y_pred)]
+    residual_pct = [r / max(p, 1) * 100 for r, p in zip(residual, y_pred)]
     return residual, residual_pct
 
 
@@ -104,18 +106,18 @@ def identify_under_over(df, y_actual, y_pred, residual, residual_pct, n_top=100)
     • Overvalued   → reziduu pozitiv mare (actual >> predicted)
     """
     # Sortăm după reziduu
-    undervalued_idx = np.argsort(residual)[:n_top]
-    overvalued_idx = np.argsort(residual)[-n_top:][::-1]
+    undervalued_idx = argsort_desc([-r for r in residual])[:n_top]
+    overvalued_idx = argsort_desc(residual)[:n_top]
 
     # Construim DataFrame-uri
     undervalued = pd.DataFrame({
         "RANK": range(1, n_top + 1),
         "NEIGHBORHOOD": df.iloc[undervalued_idx]["NEIGHBORHOOD"].values,
         "BUILDING_CLASS": df.iloc[undervalued_idx]["BUILDING CLASS CATEGORY"].values,
-        "SALE_PRICE": y_actual[undervalued_idx],
-        "PREDICTED_PRICE": y_pred[undervalued_idx],
-        "RESIDUAL": residual[undervalued_idx],
-        "RESIDUAL_PCT": residual_pct[undervalued_idx],
+        "SALE_PRICE": [y_actual[i] for i in undervalued_idx],
+        "PREDICTED_PRICE": [y_pred[i] for i in undervalued_idx],
+        "RESIDUAL": [residual[i] for i in undervalued_idx],
+        "RESIDUAL_PCT": [residual_pct[i] for i in undervalued_idx],
         "GROSS_SQFT": df.iloc[undervalued_idx]["GROSS SQUARE FEET"].values,
         "LAND_SQFT": df.iloc[undervalued_idx]["LAND SQUARE FEET"].values,
         "YEAR_BUILT": df.iloc[undervalued_idx]["YEAR BUILT"].values,
@@ -126,10 +128,10 @@ def identify_under_over(df, y_actual, y_pred, residual, residual_pct, n_top=100)
         "RANK": range(1, n_top + 1),
         "NEIGHBORHOOD": df.iloc[overvalued_idx]["NEIGHBORHOOD"].values,
         "BUILDING_CLASS": df.iloc[overvalued_idx]["BUILDING CLASS CATEGORY"].values,
-        "SALE_PRICE": y_actual[overvalued_idx],
-        "PREDICTED_PRICE": y_pred[overvalued_idx],
-        "RESIDUAL": residual[overvalued_idx],
-        "RESIDUAL_PCT": residual_pct[overvalued_idx],
+        "SALE_PRICE": [y_actual[i] for i in overvalued_idx],
+        "PREDICTED_PRICE": [y_pred[i] for i in overvalued_idx],
+        "RESIDUAL": [residual[i] for i in overvalued_idx],
+        "RESIDUAL_PCT": [residual_pct[i] for i in overvalued_idx],
         "GROSS_SQFT": df.iloc[overvalued_idx]["GROSS SQUARE FEET"].values,
         "LAND_SQFT": df.iloc[overvalued_idx]["LAND SQUARE FEET"].values,
         "YEAR_BUILT": df.iloc[overvalued_idx]["YEAR BUILT"].values,
@@ -178,9 +180,11 @@ def plot_residuals(y_actual, y_pred, residual, undervalued, overvalued, df):
 
     # (1) Actual vs Predicted
     ax = axes[0, 0]
-    lim = np.percentile(y_actual, 99)
-    m = (y_actual < lim) & (y_pred < lim)
-    ax.scatter(y_pred[m], y_actual[m], c="steelblue", s=10, alpha=0.3, edgecolors="none")
+    lim = percentile(y_actual, 99)
+    m = [(a < lim) and (p < lim) for a, p in zip(y_actual, y_pred)]
+    y_filt = [a for a, mi in zip(y_actual, m) if mi]
+    p_filt = [p for p, mi in zip(y_pred, m) if mi]
+    ax.scatter(p_filt, y_filt, c="steelblue", s=10, alpha=0.3, edgecolors="none")
     ax.plot([0, lim], [0, lim], "r--", lw=1.5, label="Perfect prediction")
     ax.set_xlabel("Predicted Price ($)")
     ax.set_ylabel("Actual Price ($)")
@@ -194,12 +198,12 @@ def plot_residuals(y_actual, y_pred, residual, undervalued, overvalued, df):
     ax = axes[0, 1]
     ax.hist(residual, bins=150, color="gray", edgecolor="white", alpha=0.7)
     ax.axvline(0, color="black", lw=1)
-    ax.axvline(np.percentile(residual, 5), color="green", linestyle="--", lw=1.5, label="Top 5% under")
-    ax.axvline(np.percentile(residual, 95), color="red", linestyle="--", lw=1.5, label="Top 5% over")
+    ax.axvline(percentile(residual, 5), color="green", linestyle="--", lw=1.5, label="Top 5% under")
+    ax.axvline(percentile(residual, 95), color="red", linestyle="--", lw=1.5, label="Top 5% over")
     ax.set_xlabel("Residual = Actual − Predicted ($)")
     ax.set_ylabel("Count")
     ax.set_title("Distribuția Reziduurilor")
-    ax.set_xlim(np.percentile(residual, 1), np.percentile(residual, 99))
+    ax.set_xlim(percentile(residual, 1), percentile(residual, 99))
     ax.legend()
 
     # (3) Subevaluate pe scatter
@@ -271,33 +275,38 @@ def main():
 
     # Filtrăm outlieri extreme pentru antrenare (transferuri nominale și prețuri aberante)
     # Dar păstrăm predicția pe întreg dataset-ul pentru a prinde și anomaliile
-    train_mask = (y_actual >= 100_000) & (y_actual <= 200_000_000)
-    print(f"\nFiltrare antrenare: {train_mask.sum():,} / {len(y_actual):,} proprietăți "
+    train_mask = [(a >= 100_000) and (a <= 200_000_000) for a in y_actual]
+    print(f"\nFiltrare antrenare: {sum(train_mask):,} / {len(y_actual):,} proprietăți "
           f"($100K – $200M)")
 
     # 2. Regresie și predicție (antrenare pe filtrat, predicție pe toate)
     print("\nAntrenare Ridge Regression pe log(SALE PRICE)...")
     model = Ridge(alpha=1.0)
-    model.fit(X_scaled[train_mask], y_log[train_mask])
-    y_pred_log = model.predict(X_scaled)
-    y_pred = np.expm1(y_pred_log)
-    r2_log = model.score(X_scaled[train_mask], y_log[train_mask])
+    model.fit(X_scaled[train_mask], [y_log[i] for i in range(len(y_log)) if train_mask[i]])
+    y_pred_log = model.predict(X_scaled).tolist()
+    y_pred = [math.expm1(v) for v in y_pred_log]
+    r2_log = model.score(X_scaled[train_mask], [y_log[i] for i in range(len(y_log)) if train_mask[i]])
     print(f"R² (log, pe set filtrat): {r2_log:.4f}")
 
     # 3. Calculează reziduurile: r = y_real − y_predicted
     print("\nCalcul reziduuri: r = y_real − y_predicted ...")
     residual, residual_pct = compute_residuals(y_actual, y_pred)
-    print(f"Reziduu mediu (total): ${residual.mean():,.0f} | Std: ${residual.std():,.0f}")
-    print(f"Reziduu mediu (filtrat): ${residual[train_mask].mean():,.0f} | "
-          f"Std: ${residual[train_mask].std():,.0f}")
+    res_mean = sum(residual) / len(residual)
+    res_std = (sum((r - res_mean) ** 2 for r in residual) / len(residual)) ** 0.5
+    res_filt = [residual[i] for i in range(len(residual)) if train_mask[i]]
+    res_filt_mean = sum(res_filt) / len(res_filt)
+    res_filt_std = (sum((r - res_filt_mean) ** 2 for r in res_filt) / len(res_filt)) ** 0.5
+    print(f"Reziduu mediu (total): ${res_mean:,.0f} | Std: ${res_std:,.0f}")
+    print(f"Reziduu mediu (filtrat): ${res_filt_mean:,.0f} | "
+          f"Std: ${res_filt_std:,.0f}")
 
     # 4. Identifică subevaluate și supraevaluate DOAR pe setul filtrat
     print("\nIdentificare top 100 subevaluate și supraevaluate (pe set filtrat)...")
     df_filt = df[train_mask].reset_index(drop=True)
-    y_actual_filt = y_actual[train_mask]
-    y_pred_filt = y_pred[train_mask]
-    residual_filt = residual[train_mask]
-    residual_pct_filt = residual_pct[train_mask]
+    y_actual_filt = [y_actual[i] for i in range(len(y_actual)) if train_mask[i]]
+    y_pred_filt = [y_pred[i] for i in range(len(y_pred)) if train_mask[i]]
+    residual_filt = [residual[i] for i in range(len(residual)) if train_mask[i]]
+    residual_pct_filt = [residual_pct[i] for i in range(len(residual_pct)) if train_mask[i]]
 
     undervalued, overvalued = identify_under_over(
         df_filt, y_actual_filt, y_pred_filt, residual_filt, residual_pct_filt, n_top=100
