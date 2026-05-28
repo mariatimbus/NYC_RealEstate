@@ -58,10 +58,10 @@ def _diag_extract(A):
 def _diag_matrix(d):
     """Creează matrice diagonală din listă."""
     n = len(d)
-    A = np.zeros((n, n))
+    A = [[0.0] * n for _ in range(n)]
     for i in range(n):
-        A[i, i] = d[i]
-    return A
+        A[i][i] = d[i]
+    return np.array(A)
 
 
 def _cumsum(arr):
@@ -94,12 +94,12 @@ def _randn(n):
 def _outer(u, v):
     """Produs exterior manual."""
     m, n = len(u), len(v)
-    A = np.zeros((m, n))
+    A = [[0.0] * n for _ in range(m)]
     for i in range(m):
         ui = float(u[i])
         for j in range(n):
-            A[i, j] = ui * float(v[j])
-    return A
+            A[i][j] = ui * float(v[j])
+    return np.array(A)
 
 
 # 1. Încărcare & preprocesare
@@ -160,9 +160,10 @@ def jacobi_eigen_decomposition(M, max_iter: int = 100, tol: float = 1e-10):
     """
     n = M.shape[0]
     A = M.copy()
-    V = np.zeros((n, n))
+    V = [[0.0] * n for _ in range(n)]
     for i in range(n):
-        V[i, i] = 1.0
+        V[i][i] = 1.0
+    V = np.array(V)
 
     for _ in range(max_iter):
         # Găsim cel mai mare element off-diagonal
@@ -212,7 +213,7 @@ def jacobi_eigen_decomposition(M, max_iter: int = 100, tol: float = 1e-10):
             V[i, q] = s * v_ip + c * v_iq
 
     eigvals = _diag_extract(A)
-    return np.array(eigvals), V
+    return eigvals, V
 
 
 def manual_svd(A, k: int = None):
@@ -295,13 +296,9 @@ def power_method_svd(A, k: int = 3, max_iter: int = 100, tol: float = 1e-10):
         AtA = A.T @ A
 
     # Construim matricile manual
-    U = np.zeros((m, k))
-    for j in range(k):
-        U[:, j] = U_cols[j]
+    U = np.array([[float(U_cols[j][i]) for j in range(k)] for i in range(m)])
     Sigma = _diag_matrix(sigmas)
-    Vt = np.zeros((k, n))
-    for j in range(k):
-        Vt[j, :] = V_cols[j]
+    Vt = np.array([[float(V_cols[i][j]) for j in range(n)] for i in range(k)])
 
     return U, Sigma, Vt
 
@@ -453,7 +450,9 @@ def plot_group_contributions(Vt, singular_values, feature_names):
     Bar plot cu contribuția absolută a fiecărui grup de caracteristici
     pentru primele 3 componente.
     """
-    loadings = np.abs(Vt.T * singular_values)  # (n_features × n_components)
+    # Absolut manual (fără np.abs)
+    raw = Vt.T * singular_values
+    loadings = np.array([[abs(float(raw[i, j])) for j in range(raw.shape[1])] for i in range(raw.shape[0])])
 
     groups = {
         "U — Preferințe piață": ["SALE PRICE", "NEIGHBORHOOD", "BUILDING CLASS CATEGORY"],
