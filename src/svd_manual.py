@@ -74,34 +74,6 @@ def _cumsum(arr):
     return result
 
 
-def _randn(n):
-    """Generează n valori N(0,1) folosind Box-Muller."""
-    result = []
-    while len(result) < n:
-        u1 = random.random()
-        u2 = random.random()
-        if u1 == 0:
-            continue
-        mag = math.sqrt(-2.0 * math.log(u1))
-        z1 = mag * math.cos(2.0 * math.pi * u2)
-        z2 = mag * math.sin(2.0 * math.pi * u2)
-        result.append(z1)
-        if len(result) < n:
-            result.append(z2)
-    return np.array(result)
-
-
-def _outer(u, v):
-    """Produs exterior manual."""
-    m, n = len(u), len(v)
-    A = [[0.0] * n for _ in range(m)]
-    for i in range(m):
-        ui = float(u[i])
-        for j in range(n):
-            A[i][j] = ui * float(v[j])
-    return np.array(A)
-
-
 # 1. Încărcare & preprocesare
 
 
@@ -259,48 +231,6 @@ def manual_svd(A, k: int = None):
     U = U[:, :k]
 
     return U, singular_values, V.T
-
-
-def power_method_svd(A, k: int = 3, max_iter: int = 100, tol: float = 1e-10):
-    """
-    (Opțional) Power iteration pentru primele k componente singulare.
-    Util pentru înțelegere, dar mai lent decât eigen-decomposition.
-    """
-    m, n = A.shape
-    U_cols = []
-    V_cols = []
-    sigmas = []
-
-    AtA = A.T @ A
-
-    for _ in range(k):
-        v = _randn(n)
-        v = v / _norm(v)
-
-        for __ in range(max_iter):
-            v_new = AtA @ v
-            v_new = v_new / _norm(v_new)
-            if _norm(v_new - v) < tol:
-                break
-            v = v_new
-
-        sigma = _norm(A @ v)
-        u = (A @ v) / (sigma + 1e-12)
-
-        V_cols.append(v)
-        U_cols.append(u)
-        sigmas.append(sigma)
-
-        # Deflație: eliminăm componenta găsită
-        A = A - sigma * _outer(u, v)
-        AtA = A.T @ A
-
-    # Construim matricile manual
-    U = np.array([[float(U_cols[j][i]) for j in range(k)] for i in range(m)])
-    Sigma = _diag_matrix(sigmas)
-    Vt = np.array([[float(V_cols[i][j]) for j in range(n)] for i in range(k)])
-
-    return U, Sigma, Vt
 
 
 # 3. Interpretare conceptuală a grupurilor
